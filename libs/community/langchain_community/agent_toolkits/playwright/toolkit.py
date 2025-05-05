@@ -11,15 +11,21 @@ from langchain_community.tools.playwright.base import (
     BaseBrowserTool,
     lazy_import_playwright_browsers,
 )
+from langchain_community.tools.playwright.check import CheckTool
 from langchain_community.tools.playwright.click import ClickTool
 from langchain_community.tools.playwright.current_page import CurrentWebPageTool
+from langchain_community.tools.playwright.extract_dom_tree import ExtractDOMTreeTool
 from langchain_community.tools.playwright.extract_hyperlinks import (
     ExtractHyperlinksTool,
 )
 from langchain_community.tools.playwright.extract_text import ExtractTextTool
 from langchain_community.tools.playwright.get_elements import GetElementsTool
+from langchain_community.tools.playwright.input_text import InputTextTool
 from langchain_community.tools.playwright.navigate import NavigateTool
 from langchain_community.tools.playwright.navigate_back import NavigateBackTool
+from langchain_community.tools.playwright.press_key import PressKeyTool
+from langchain_community.tools.playwright.screenshot import ScreenshotTool
+from langchain_community.tools.playwright.select_option import SelectOptionTool
 
 if TYPE_CHECKING:
     from playwright.async_api import Browser as AsyncBrowser
@@ -85,21 +91,38 @@ class PlayWrightBrowserToolkit(BaseToolkit):
     def get_tools(self) -> List[BaseTool]:
         """Get the tools in the toolkit."""
         tool_classes: List[Type[BaseBrowserTool]] = [
-            ClickTool,
+            # Navigation tools
             NavigateTool,
             NavigateBackTool,
+            
+            # Extraction tools
             ExtractTextTool,
             ExtractHyperlinksTool,
             GetElementsTool,
+            ExtractDOMTreeTool,
             CurrentWebPageTool,
+            
+            # Interaction tools
+            ClickTool,
+            InputTextTool,
+            PressKeyTool,
+            SelectOptionTool,
+            CheckTool,
+            
+            # Visual tools
+            ScreenshotTool,
         ]
 
-        tools = [
-            tool_cls.from_browser(
-                sync_browser=self.sync_browser, async_browser=self.async_browser
-            )
-            for tool_cls in tool_classes
-        ]
+        tools = []
+        for tool_cls in tool_classes:
+            try:
+                tool = tool_cls.from_browser(
+                    sync_browser=self.sync_browser, async_browser=self.async_browser
+                )
+                tools.append(tool)
+            except Exception as e:
+                print(f"Failed to create tool {tool_cls.__name__}: {str(e)}")
+        
         return cast(List[BaseTool], tools)
 
     @classmethod

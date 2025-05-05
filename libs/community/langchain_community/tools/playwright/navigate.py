@@ -78,6 +78,6 @@ class NavigateTool(BaseBrowserTool):
         if self.async_browser is None:
             raise ValueError(f"Asynchronous browser not provided to {self.name}")
         page = await aget_current_page(self.async_browser)
-        response = await page.goto(url)
+        response = await page.goto(url, wait_until="domcontentloaded")
         status = response.status if response else "unknown"
         return f"Navigating to {url} returned status code {status}"
