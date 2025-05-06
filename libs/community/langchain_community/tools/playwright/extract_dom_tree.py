@@ -32,7 +32,7 @@ class ExtractDOMTreeTool(BaseBrowserTool):
     )
     args_schema: Type[BaseModel] = ExtractDOMTreeToolInput
 
-    playwright_timeout: float = 5_000
+    playwright_timeout: float = 30_000
     """Timeout (in ms) for Playwright to wait for JavaScript execution."""
 
     def _dom_extract_script(self) -> str:

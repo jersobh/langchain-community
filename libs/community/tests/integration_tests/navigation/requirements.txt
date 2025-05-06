@@ -1,0 +1,12 @@
+python-dotenv
+nest_asyncio
+pydantic
+playwright
+langchain
+langchain-core
+langchain-google-genai
+langchain-ollama
+langchain-community
+langgraph
+beautifulsoup4
+lxml

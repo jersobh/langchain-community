@@ -65,7 +65,7 @@ class NavigateTool(BaseBrowserTool):
         if self.sync_browser is None:
             raise ValueError(f"Synchronous browser not provided to {self.name}")
         page = get_current_page(self.sync_browser)
-        response = page.goto(url)
+        response = page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         status = response.status if response else "unknown"
         return f"Navigating to {url} returned status code {status}"
 
@@ -78,6 +78,6 @@ class NavigateTool(BaseBrowserTool):
         if self.async_browser is None:
             raise ValueError(f"Asynchronous browser not provided to {self.name}")
         page = await aget_current_page(self.async_browser)
-        response = await page.goto(url, wait_until="domcontentloaded")
+        response = await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         status = response.status if response else "unknown"
         return f"Navigating to {url} returned status code {status}"

@@ -26,6 +26,7 @@ from langchain_community.tools.playwright.navigate_back import NavigateBackTool
 from langchain_community.tools.playwright.press_key import PressKeyTool
 from langchain_community.tools.playwright.screenshot import ScreenshotTool
 from langchain_community.tools.playwright.select_option import SelectOptionTool
+from langchain_community.tools.playwright.scroll import ScrollTool
 
 if TYPE_CHECKING:
     from playwright.async_api import Browser as AsyncBrowser
@@ -108,6 +109,7 @@ class PlayWrightBrowserToolkit(BaseToolkit):
             PressKeyTool,
             SelectOptionTool,
             CheckTool,
+            ScrollTool,
             
             # Visual tools
             ScreenshotTool,

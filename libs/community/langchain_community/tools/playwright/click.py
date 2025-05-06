@@ -10,210 +10,161 @@ from pydantic import BaseModel, Field
 
 from langchain_community.tools.playwright.base import BaseBrowserTool
 from langchain_community.tools.playwright.utils import (
-    aget_current_page,
     get_current_page,
+    aget_current_page,
 )
 
 
 class ClickToolInput(BaseModel):
     """Input for ClickTool."""
 
-    selector: str = Field(..., description="CSS selector for the element to click")
-    force: bool = Field(
-        False, 
-        description="Whether to bypass pointer interception and click through"
-    )
-    wait_for_navigation: bool = Field(
-        False,
-        description="Whether to wait for navigation to complete after clicking"
-    )
-    wait_for_timeout: int = Field(
-        0,
-        description="Milliseconds to wait after clicking (useful for letting page updates render)"
-    )
+    css_selector: Optional[str] = Field(None, description="CSS selector to click")
+    text: Optional[str] = Field(None, description="Text content to match and click")
+    xpath: Optional[str] = Field(None, description="XPath to locate and click")
+    data_attribute: Optional[str] = Field(None, description="Name of data-* attribute (e.g., data-testid)")
+    data_value: Optional[str] = Field(None, description="Value of the data-* attribute")
+    nth: Optional[int] = Field(0, description="Index of the element to click when multiple are found (default is 0)")
+    force: bool = Field(False, description="Whether to force the click (bypass visibility)")
+    wait_for_navigation: bool = Field(False, description="Wait for navigation after the click")
+    wait_for_timeout: int = Field(0, description="Milliseconds to wait after clicking")
 
 
 class ClickTool(BaseBrowserTool):
-    """Tool for clicking on an element with the given CSS selector."""
-
     name: str = "click_element"
     description: str = (
-        "Click on an element with the given CSS selector. "
-        "Can wait for navigation or timeout after clicking. "
-        "Use force=True to click hidden elements."
+        "Click on an element using one of: css_selector, text content (text=...), XPath, or data-* attributes. "
+        "You may specify nth to choose a specific element when multiple match."
     )
     args_schema: Type[BaseModel] = ClickToolInput
 
     visible_only: bool = True
-    """Whether to consider only visible elements."""
     playwright_strict: bool = False
-    """Whether to employ Playwright's strict mode when clicking on elements."""
     playwright_timeout: float = 5_000
-    """Timeout (in ms) for Playwright to wait for element to be ready."""
 
-    def _selector_effective(self, selector: str) -> str:
-        if not self.visible_only:
-            return selector
-        return f"{selector} >> visible=1"
+    def _build_selector(
+        self,
+        css_selector: Optional[str],
+        text: Optional[str],
+        xpath: Optional[str],
+        data_attribute: Optional[str],
+        data_value: Optional[str],
+    ) -> str:
+        if css_selector:
+            return css_selector
+        elif text:
+            return f"text={text}"
+        elif xpath:
+            return f"xpath={xpath}"
+        elif data_attribute and data_value:
+            return f'[{data_attribute}="{data_value}"]'
+        else:
+            raise ValueError("Provide css_selector, text, xpath, or data_attribute + data_value")
 
     def _run(
         self,
-        selector: str,
+        css_selector: Optional[str] = None,
+        text: Optional[str] = None,
+        xpath: Optional[str] = None,
+        data_attribute: Optional[str] = None,
+        data_value: Optional[str] = None,
+        nth: Optional[int] = 0,
         force: bool = False,
         wait_for_navigation: bool = False,
         wait_for_timeout: int = 0,
         run_manager: Optional[CallbackManagerForToolRun] = None,
     ) -> str:
-        """Use the tool."""
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, Error as PlaywrightError
+
         if self.sync_browser is None:
-            raise ValueError(f"Synchronous browser not provided to {self.name}")
+            raise ValueError("Synchronous browser not initialized.")
+
         page = get_current_page(self.sync_browser)
-        
-        # Prepare our effective selector
-        selector_effective = self._selector_effective(selector=selector)
-        
-        # Import required exceptions
-        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-        from playwright.sync_api import Error as PlaywrightError
-
+        page.wait_for_load_state("load")
         try:
-            # First verify element exists by trying to locate it
-            try:
-                # Get locator without strict mode (which might not be supported)
-                element = page.locator(selector_effective).first
-                
-                # Check if element exists
-                count = element.count()
-                if count == 0:
-                    return f"Element '{selector}' not found"
-                
-                # Check if element is visible if needed
-                is_visible = element.is_visible(timeout=self.playwright_timeout / 2)
-                if not is_visible and not force and self.visible_only:
-                    return f"Element '{selector}' found but not visible. Use force=True to click it."
-            except PlaywrightTimeoutError:
-                return f"Element '{selector}' not found or timed out waiting for it"
-            except PlaywrightError as e:
-                return f"Error locating element '{selector}': {str(e)}"
+            selector = self._build_selector(css_selector, text, xpath, data_attribute, data_value)
+            page.wait_for_selector(selector, timeout=self.playwright_timeout)
+            locator = page.locator(selector)
+            if locator.count() == 0:
+                return f"No element found for selector: {selector}"
 
-            # Setup for navigation waiting if requested
-            if wait_for_navigation:
-                try:
-                    with page.expect_navigation(timeout=self.playwright_timeout * 2) as nav_promise:
-                        # Perform the click with appropriate options
-                        page.click(
-                            selector_effective,
-                            force=force,
-                            timeout=self.playwright_timeout,
-                        )
-                    # Wait for navigation to complete
-                    nav_result = nav_promise.value
-                    # Add extra timeout if requested
-                    if wait_for_timeout > 0:
-                        page.wait_for_timeout(wait_for_timeout)
-                    return f"Clicked element '{selector}' and navigated to {nav_result.url}"
-                except PlaywrightTimeoutError:
-                    return f"Clicked element '{selector}' but navigation timed out"
-            else:
-                # Perform the click without waiting for navigation
-                try:
-                    page.click(
-                        selector_effective,
-                        force=force,
-                        timeout=self.playwright_timeout,
-                    )
-                    
-                    # Add extra timeout if requested
-                    if wait_for_timeout > 0:
-                        page.wait_for_timeout(wait_for_timeout)
-                    
-                    # Get the current URL
-                    current_url = page.url
-                    
-                    return f"Clicked element '{selector}'"
-                except PlaywrightTimeoutError:
-                    return f"Unable to click element '{selector}': element not clickable"
-                
+            element = locator.nth(nth or 0)
+            element.scroll_into_view_if_needed(timeout=self.playwright_timeout)
+
+            if not element.is_visible(timeout=self.playwright_timeout / 2) and not force and self.visible_only:
+                return "Element found but not visible. Use force=True to click it."
+
+            try:
+                if wait_for_navigation:
+                    with page.expect_navigation(timeout=self.playwright_timeout * 2):
+                        element.click(force=force, timeout=self.playwright_timeout)
+                else:
+                    element.click(force=force, timeout=self.playwright_timeout)
+            except (PlaywrightTimeoutError, PlaywrightError):
+                handle = element.element_handle()
+                if handle and page.evaluate("el => document.body.contains(el)", handle):
+                    page.evaluate("el => el.click()", handle)
+                else:
+                    return "Fallback click failed. Element not attached to DOM."
+
+            if wait_for_timeout > 0:
+                page.wait_for_timeout(wait_for_timeout)
+
+            return f"Clicked element (nth={nth}). Current URL: {page.url}"
+
         except Exception as e:
-            return f"Error clicking element '{selector}': {str(e)}"
+            return f"ClickTool error: {str(e)}"
 
     async def _arun(
         self,
-        selector: str,
+        css_selector: Optional[str] = None,
+        text: Optional[str] = None,
+        xpath: Optional[str] = None,
+        data_attribute: Optional[str] = None,
+        data_value: Optional[str] = None,
+        nth: Optional[int] = 0,
         force: bool = False,
         wait_for_navigation: bool = False,
         wait_for_timeout: int = 0,
         run_manager: Optional[AsyncCallbackManagerForToolRun] = None,
     ) -> str:
-        """Use the tool."""
+        from playwright.async_api import TimeoutError as PlaywrightTimeoutError, Error as PlaywrightError
+
         if self.async_browser is None:
-            raise ValueError(f"Asynchronous browser not provided to {self.name}")
+            raise ValueError("Asynchronous browser not initialized.")
+
         page = await aget_current_page(self.async_browser)
-        
-        # Prepare our effective selector
-        selector_effective = self._selector_effective(selector=selector)
-        
-        # Import required exceptions
-        from playwright.async_api import TimeoutError as PlaywrightTimeoutError
-        from playwright.async_api import Error as PlaywrightError
-
+        await page.wait_for_load_state("load")
         try:
-            # First verify element exists by trying to locate it
-            try:
-                # Get locator without strict mode (which might not be supported)
-                element = page.locator(selector_effective).first
-                
-                # Check if element exists
-                count = await element.count()
-                if count == 0:
-                    return f"Element '{selector}' not found"
-                
-                # Check if element is visible if needed
-                is_visible = await element.is_visible(timeout=self.playwright_timeout / 2)
-                if not is_visible and not force and self.visible_only:
-                    return f"Element '{selector}' found but not visible. Use force=True to click it."
-            except PlaywrightTimeoutError:
-                return f"Element '{selector}' not found or timed out waiting for it"
-            except PlaywrightError as e:
-                return f"Error locating element '{selector}': {str(e)}"
+            selector = self._build_selector(css_selector, text, xpath, data_attribute, data_value)
+            await page.wait_for_selector(selector, timeout=self.playwright_timeout)
+            locator = page.locator(selector)
+            count = await locator.count()
+            if count == 0:
+                return f"No element found for selector: {selector}"
 
-            # Setup for navigation waiting if requested
-            if wait_for_navigation:
-                try:
-                    async with page.expect_navigation(timeout=self.playwright_timeout * 2) as nav_promise:
-                        # Perform the click
-                        await page.click(
-                            selector_effective,
-                            force=force,
-                            timeout=self.playwright_timeout,
-                        )
-                    # Wait for navigation to complete
-                    nav_result = await nav_promise.value
-                    # Add extra timeout if requested
-                    if wait_for_timeout > 0:
-                        await page.wait_for_timeout(wait_for_timeout)
-                    return f"Clicked element '{selector}' and navigated to {nav_result.url}"
-                except PlaywrightTimeoutError:
-                    return f"Clicked element '{selector}' but navigation timed out"
-            else:
-                # Perform the click without waiting for navigation
-                try:
-                    await page.click(
-                        selector_effective,
-                        force=force,
-                        timeout=self.playwright_timeout,
-                    )
-                    
-                    # Add extra timeout if requested
-                    if wait_for_timeout > 0:
-                        await page.wait_for_timeout(wait_for_timeout)
-                    
-                    # Get the current URL
-                    current_url = page.url
-                    
-                    return f"Clicked element '{selector}'"
-                except PlaywrightTimeoutError:
-                    return f"Unable to click element '{selector}': element not clickable"
-                
+            element = locator.nth(nth or 0)
+            await element.scroll_into_view_if_needed(timeout=self.playwright_timeout)
+
+            if not await element.is_visible(timeout=self.playwright_timeout / 2) and not force and self.visible_only:
+                return "Element found but not visible. Use force=True to click it."
+
+            try:
+                if wait_for_navigation:
+                    async with page.expect_navigation(timeout=self.playwright_timeout * 2):
+                        await element.click(force=force, timeout=self.playwright_timeout)
+                else:
+                    await element.click(force=force, timeout=self.playwright_timeout)
+            except (PlaywrightTimeoutError, PlaywrightError):
+                handle = await element.element_handle()
+                if handle and await page.evaluate("el => document.body.contains(el)", handle):
+                    await page.evaluate("el => el.click()", handle)
+                else:
+                    return "Fallback click failed. Element not attached to DOM."
+
+            if wait_for_timeout > 0:
+                await page.wait_for_timeout(wait_for_timeout)
+
+            return f"Clicked element (nth={nth}). Current URL: {page.url}"
+
         except Exception as e:
-            return f"Error clicking element '{selector}': {str(e)}"
+            return f"ClickTool async error: {str(e)}"
