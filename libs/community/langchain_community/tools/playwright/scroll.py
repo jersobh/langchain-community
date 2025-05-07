@@ -33,9 +33,9 @@ class ScrollTool(BaseBrowserTool):
     )
     args_schema: Type[BaseModel] = ScrollToolInput
 
-    visible_only: bool = True
+    visible_only: bool = False
     playwright_strict: bool = False
-    playwright_timeout: float = 5_000
+    playwright_timeout: float = 10_000
 
     def _run(
         self,
@@ -64,8 +64,16 @@ class ScrollTool(BaseBrowserTool):
 
                 handle = element.element_handle()
                 if handle:
-                    handle.scroll_into_view_if_needed(timeout=self.playwright_timeout)
-                    return f"Scrolled to element '{selector}'"
+                    if x is not None or y is not None:
+                        scroll_x = x or 0
+                        scroll_y = y or 0
+                        handle.evaluate(
+                            f"(el) => el.scrollBy({scroll_x}, {scroll_y})"
+                        )
+                        return f"Scrolled element '{selector}' by x={scroll_x}, y={scroll_y}"
+                    else:
+                        handle.scroll_into_view_if_needed(timeout=self.playwright_timeout)
+                        return f"Scrolled to element '{selector}'"
                 else:
                     return f"Element handle not usable for '{selector}'"
 
@@ -81,6 +89,7 @@ class ScrollTool(BaseBrowserTool):
             return f"Timeout waiting for element '{selector}'"
         except Exception as e:
             return f"ScrollTool error: {str(e)}"
+
 
     async def _arun(
         self,
@@ -110,8 +119,16 @@ class ScrollTool(BaseBrowserTool):
 
                 handle = await element.element_handle()
                 if handle:
-                    await handle.scroll_into_view_if_needed(timeout=self.playwright_timeout)
-                    return f"Scrolled to element '{selector}'"
+                    if x is not None or y is not None:
+                        scroll_x = x or 0
+                        scroll_y = y or 0
+                        await handle.evaluate(
+                            f"(el) => el.scrollBy({scroll_x}, {scroll_y})"
+                        )
+                        return f"Scrolled element '{selector}' by x={scroll_x}, y={scroll_y}"
+                    else:
+                        await handle.scroll_into_view_if_needed(timeout=self.playwright_timeout)
+                        return f"Scrolled to element '{selector}'"
                 else:
                     return f"Element handle not usable for '{selector}'"
 

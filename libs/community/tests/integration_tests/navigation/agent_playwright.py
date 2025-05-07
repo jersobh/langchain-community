@@ -5,7 +5,9 @@ import asyncio
 import json
 import os
 
+import random
 from typing import Literal, TypedDict
+import uuid
 
 import nest_asyncio
 from dotenv import load_dotenv
@@ -17,6 +19,9 @@ from langchain_core.prompts import ChatPromptTemplate, HumanMessagePromptTemplat
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama import ChatOllama
 from langgraph.graph import END, START, StateGraph
+from langgraph.checkpoint.memory import MemorySaver
+from langchain.agents import create_tool_calling_agent
+from langchain.agents import AgentExecutor
 
 # Playwright tools
 from langchain_community.tools.playwright.click import ClickTool
@@ -46,25 +51,26 @@ class AgentState(TypedDict):
     step: Literal["planning", "navigating"]
     result: str
     steps: list[str]
+    history: list[str]
 
 async def main():
     # Set up LLM
     
     # stup for using ollama
-    # llm = ChatOllama(
-    #     model="Hituzip/gemma3-tools:4b",
-    #     stop=["<end_of_turn>"],
-    #     temperature=0.8,
-    #     num_ctx=8196,
-    #     top_k=64,
-    #     top_p=0.95,
-    #     num_threads=8,
-    #     gpu_layers=8,
-    # )
+    llm = ChatOllama(
+        model="Hituzip/gemma3-tools:4b",
+        stop=["<end_of_turn>"],
+        temperature=0.8,
+        num_ctx=8196,
+        top_k=64,
+        top_p=0.95,
+        num_threads=8,
+        gpu_layers=8,
+    )
     
     
     # stup for using Google Gemini
-    model_name = "gemini-2.5-pro-preview-03-25"
+    model_name = "gemini-2.5-flash-preview-04-17"
     llm = ChatGoogleGenerativeAI(model=model_name, api_key=SecretStr(api_key))
 
     # Launch Playwright
@@ -78,7 +84,7 @@ async def main():
             ],
         headless=False  # Optional: set to True if you want headless mode
     )
-    page = await browser.new_page()
+    page = await browser.new_page(no_viewport=True)
 
     # Create tools
     tools = [
@@ -104,7 +110,7 @@ async def main():
         SystemMessage(content="""You are a web automation agent that can browse websites and perform tasks as requested.
 
 EFFICIENT WORKFLOW - follow this exactly:
-1. Navigate to requested URL
+1. Navigate to requested URL. The URLS must start with 'https://'
 2. Aways accept cookies when asked
 3. Call extract_dom_tree ONCE to analyze the page structure
 4. Examine the DOM to identify relevant elements (forms, buttons, inputs, etc.)
@@ -138,14 +144,13 @@ IMPORTANT NOTES:
         MessagesPlaceholder(variable_name="agent_scratchpad")
     ])
 
-    from langchain.agents import create_tool_calling_agent
-    from langchain.agents import AgentExecutor
 
     # Navigator agent (executes tool calls)
     navigator_agent = AgentExecutor(
         agent=create_tool_calling_agent(llm_with_tools, tools, navigator_prompt),
         tools=tools,
-        return_only_outputs=False,
+        max_iterations=120,
+        max_execution_time=360,
         verbose=True,  # <-- enable logging
     )
 
@@ -164,16 +169,18 @@ IMPORTANT NOTES:
         dom_tree = await ExtractDOMTreeTool(page=page, async_browser=browser).arun({})
         input_with_dom = f"{state['input']}\n\n[DOM]:\n{dom_tree}"
         
-        steps = []
+        steps = state.get("steps", [])
+        history = state.get("history", [])
         current_input = input_with_dom
-        max_steps = 30  # avoid infinite loops
 
-        for _ in range(max_steps):
+        while True:
+            await page.wait_for_timeout(random.randint(1,3))
             output = await navigator_agent.ainvoke({"input": current_input})
 
             for tool_call, result in output.get("intermediate_steps", []):
                 step_text = f"Tool: {tool_call.tool}, Args: {tool_call.tool_input}, Result: {result}"
                 steps.append(step_text)
+                history.append(step_text)
 
             if "output" in output and output["output"]:
                 break  # task complete
@@ -186,8 +193,11 @@ IMPORTANT NOTES:
             "input": state["input"],
             "step": "done",
             "result": output.get("output", ""),
-            "steps": steps
+            "steps": steps,
+            "history": history
         }
+        
+    checkpointer = MemorySaver()
 
     workflow.add_node("planner", planner_node)
     workflow.add_node("navigator", navigator_node)
@@ -195,22 +205,25 @@ IMPORTANT NOTES:
     workflow.add_edge("planner", "navigator")
     workflow.add_edge("navigator", END)
 
-    graph = workflow.compile()
+    graph = workflow.compile(checkpointer=checkpointer)
 
     # Parse CLI
     parser = argparse.ArgumentParser()
     parser.add_argument("prompt", help="Prompt for the agent")
-    parser.add_argument("--vision", action="store_true", help="Use screenshot in prompt")
     args = parser.parse_args()
 
     # Run graph
+    thread_id = str(uuid.uuid4())
+
     final_state = await graph.ainvoke({
         "input": args.prompt,
         "step": "planning",
-        "result": ""
-    })
-
-    print("\nFinal Output (JSON + Steps):\n")
+        "result": "",
+        "steps": [],
+        "history": []
+    }, config={"configurable": {"thread_id": thread_id}})
+    
+    print("\nResult:\n")
     print(json.dumps(final_state, indent=2))
 
     await browser.close()

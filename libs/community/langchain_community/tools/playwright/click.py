@@ -37,9 +37,9 @@ class ClickTool(BaseBrowserTool):
     )
     args_schema: Type[BaseModel] = ClickToolInput
 
-    visible_only: bool = True
+    visible_only: bool = False
     playwright_strict: bool = False
-    playwright_timeout: float = 5_000
+    playwright_timeout: float = 10_000
 
     def _build_selector(
         self,
