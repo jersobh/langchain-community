@@ -2,7 +2,6 @@
 
 import argparse
 import asyncio
-import json
 import os
 
 import random
@@ -16,9 +15,9 @@ from pydantic import SecretStr
 
 from langchain_core.messages import SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, HumanMessagePromptTemplate, MessagesPlaceholder
+
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_ollama import ChatOllama
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 from langchain.agents import create_tool_calling_agent
 from langchain.agents import AgentExecutor
@@ -36,6 +35,10 @@ from langchain_community.tools.playwright.navigate_back import NavigateBackTool
 from langchain_community.tools.playwright.press_key import PressKeyTool
 from langchain_community.tools.playwright.screenshot import ScreenshotTool
 from langchain_community.tools.playwright.scroll import ScrollTool
+from langchain_community.tools.playwright.dragndrop import DragAndDropTool
+from langchain_community.tools.playwright.download_file import DownloadFileTool
+from langchain_community.tools.playwright.output_to_file import OutputToFileTool
+from langchain_community.tools.playwright.http_request import HttpRequestTool
 
 
 load_dotenv()
@@ -57,20 +60,19 @@ async def main():
     # Set up LLM
     
     # stup for using ollama
-    llm = ChatOllama(
-        model="Hituzip/gemma3-tools:4b",
-        stop=["<end_of_turn>"],
-        temperature=0.8,
-        num_ctx=8196,
-        top_k=64,
-        top_p=0.95,
-        num_threads=8,
-        gpu_layers=8,
-    )
+    # llm = ChatOllama(
+    #     model="Hituzip/gemma3-tools:4b",
+    #     stop=["<end_of_turn>"],
+    #     temperature=0.8,
+    #     num_ctx=8196,
+    #     top_k=64,
+    #     top_p=0.95,
+    #     num_thread=16,
+    # )
     
     
     # stup for using Google Gemini
-    model_name = "gemini-2.5-flash-preview-04-17"
+    model_name = "gemini-2.5-pro-preview-05-06"
     llm = ChatGoogleGenerativeAI(model=model_name, api_key=SecretStr(api_key))
 
     # Launch Playwright
@@ -100,6 +102,10 @@ async def main():
         ExtractHyperlinksTool(page=page, async_browser=browser),
         GetElementsTool(page=page, async_browser=browser),
         ScrollTool(page=page, async_browser=browser),
+        DragAndDropTool(page=page, async_browser=browser),
+        DownloadFileTool(),
+        OutputToFileTool(),
+        HttpRequestTool(),
     ]
 
     # Bind tools to LLM
@@ -139,11 +145,13 @@ IMPORTANT NOTES:
 - Use press_key to submit forms or trigger actions (e.g., Enter key)
 - After inputting text in forms, always take the appropriate action to submit
 - For any page, analyze the DOM first to discover the correct selectors
+- When exporting to JSON, first try to capture and organize any inherent data structure (e.g. lists, tables, key–value pairs). 
+  If the source offers no clear schema, fall back to extracting text and then wrap it in a sensible JSON format.
+
 """),
         HumanMessagePromptTemplate.from_template("{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad")
     ])
-
 
     # Navigator agent (executes tool calls)
     navigator_agent = AgentExecutor(
@@ -207,7 +215,6 @@ IMPORTANT NOTES:
 
     graph = workflow.compile(checkpointer=checkpointer)
 
-    # Parse CLI
     parser = argparse.ArgumentParser()
     parser.add_argument("prompt", help="Prompt for the agent")
     args = parser.parse_args()
@@ -215,7 +222,7 @@ IMPORTANT NOTES:
     # Run graph
     thread_id = str(uuid.uuid4())
 
-    final_state = await graph.ainvoke({
+    await graph.ainvoke({
         "input": args.prompt,
         "step": "planning",
         "result": "",
@@ -223,9 +230,8 @@ IMPORTANT NOTES:
         "history": []
     }, config={"configurable": {"thread_id": thread_id}})
     
-    print("\nResult:\n")
-    print(json.dumps(final_state, indent=2))
-
+    print(f"\n✅ Job finished")
+    
     await browser.close()
     await playwright.stop()
 
