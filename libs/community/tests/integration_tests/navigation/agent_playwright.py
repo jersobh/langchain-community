@@ -36,6 +36,12 @@ from langchain_community.tools.playwright.press_key import PressKeyTool
 from langchain_community.tools.playwright.screenshot import ScreenshotTool
 from langchain_community.tools.playwright.scroll import ScrollTool
 from langchain_community.tools.playwright.dragndrop import DragAndDropTool
+from langchain_community.tools.playwright.drag_slider import DragSliderTool
+from langchain_community.tools.playwright.hover_element import HoverElementTool
+from langchain_community.tools.playwright.extract_inputs import ExtractInputsTool
+from langchain_community.tools.playwright.switch_frame import SwitchFrameTool
+from langchain_community.tools.playwright.upload_file import UploadFileTool
+from langchain_community.tools.playwright.select_dropdown import SelectDropdownTool
 from langchain_community.tools.playwright.download_file import DownloadFileTool
 from langchain_community.tools.playwright.output_to_file import OutputToFileTool
 from langchain_community.tools.playwright.http_request import HttpRequestTool
@@ -72,7 +78,7 @@ async def main():
     
     
     # stup for using Google Gemini
-    model_name = "gemini-2.5-pro-preview-05-06"
+    model_name = "gemini-2.5-flash-preview-04-17"
     llm = ChatGoogleGenerativeAI(model=model_name, api_key=SecretStr(api_key))
 
     # Launch Playwright
@@ -103,6 +109,12 @@ async def main():
         GetElementsTool(page=page, async_browser=browser),
         ScrollTool(page=page, async_browser=browser),
         DragAndDropTool(page=page, async_browser=browser),
+        HoverElementTool(page=page, async_browser=browser),
+        UploadFileTool(page=page, async_browser=browser),
+        SwitchFrameTool(page=page, async_browser=browser),
+        DragSliderTool(page=page, async_browser=browser),
+        ExtractInputsTool(page=page, async_browser=browser),
+        SelectDropdownTool(page=page, async_browser=browser),
         DownloadFileTool(),
         OutputToFileTool(),
         HttpRequestTool(),
