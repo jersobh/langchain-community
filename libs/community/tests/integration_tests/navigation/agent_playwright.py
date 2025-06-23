@@ -16,7 +16,7 @@ from pydantic import SecretStr
 from langchain_core.messages import SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, HumanMessagePromptTemplate, MessagesPlaceholder
 
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 from langchain.agents import create_tool_calling_agent
@@ -48,9 +48,13 @@ from langchain_community.tools.playwright.http_request import HttpRequestTool
 
 
 load_dotenv()
-api_key = os.getenv('GEMINI_API_KEY')
-if not api_key:
-    raise ValueError('GEMINI_API_KEY is not set')
+api_key = os.getenv('OPENROUTER_API_KEY')
+base_url = os.getenv('OPENROUTER_BASE_URL')
+site_url = os.getenv('YOUR_SITE_URL')
+site_name = os.getenv('YOUR_SITE_NAME')
+
+if not all([api_key, base_url]):
+    raise ValueError('Required environment variables are not set')
 
 nest_asyncio.apply()
 
@@ -64,28 +68,22 @@ class AgentState(TypedDict):
 
 async def main():
     # Set up LLM
-    
-    # stup for using ollama
-    # llm = ChatOllama(
-    #     model="Hituzip/gemma3-tools:4b",
-    #     stop=["<end_of_turn>"],
-    #     temperature=0.8,
-    #     num_ctx=8196,
-    #     top_k=64,
-    #     top_p=0.95,
-    #     num_thread=16,
-    # )
-    
-    
-    # stup for using Google Gemini
-    model_name = "gemini-2.5-flash-preview-04-17"
-    llm = ChatGoogleGenerativeAI(model=model_name, api_key=SecretStr(api_key))
+    llm = ChatOpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        model_name="mistralai/devstral-small-2505:free",
+        temperature=0,
+        streaming=True,
+    )
 
     # Launch Playwright
     playwright = await async_playwright().start()
     browser = await playwright.chromium.launch(
         # executable_path="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
         args=[
+                "--disable-gpu",
+                "--disable-dev-shm-usage",
+                "--disable-web-security",
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
@@ -127,6 +125,30 @@ async def main():
     navigator_prompt = ChatPromptTemplate.from_messages([
         SystemMessage(content="""You are a web automation agent that can browse websites and perform tasks as requested.
 
+AVAILABLE TOOLS:
+- navigate: Navigate to a URL
+- navigate_back: Go back to the previous page
+- extract_dom_tree: Get the DOM structure of the current page
+- click: Click on an element
+- input_text: Enter text into an input field
+- press_key: Press a keyboard key
+- take_screenshot: Capture a screenshot
+- get_current_page: Get the current page URL
+- extract_text: Extract text from elements
+- extract_hyperlinks: Get all hyperlinks on the page
+- get_elements: Find elements matching a selector
+- scroll: Scroll the page
+- drag_and_drop: Drag and drop elements
+- hover_element: Hover over an element
+- upload_file: Upload a file
+- switch_frame: Switch to an iframe
+- drag_slider: Drag a slider element
+- extract_inputs: Get all input fields
+- select_dropdown: Select an option from a dropdown
+- download_file: Download a file
+- output_to_file: Save output to a file
+- http_request: Make an HTTP request
+
 EFFICIENT WORKFLOW - follow this exactly:
 1. Navigate to requested URL. The URLS must start with 'https://'
 2. Aways accept cookies when asked
@@ -160,6 +182,17 @@ IMPORTANT NOTES:
 - When exporting to JSON, first try to capture and organize any inherent data structure (e.g. lists, tables, key–value pairs). 
   If the source offers no clear schema, fall back to extracting text and then wrap it in a sensible JSON format.
 
+TOOL USAGE FORMAT:
+When using tools, always use this format:
+1. First, use navigate to go to the URL
+2. Then use extract_dom_tree to understand the page structure
+3. Use other tools as needed based on the task
+4. Always check the results of each tool call
+
+Example tool usage:
+1. navigate({"url": "https://example.com"})
+2. extract_dom_tree({})
+3. click({"selector": "button.submit"})
 """),
         HumanMessagePromptTemplate.from_template("{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad")
